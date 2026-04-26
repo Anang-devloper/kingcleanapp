@@ -1,1 +1,175 @@
 
+const bcrypt = require('bcryptjs');
+const db = require('../config/db'); // your MySQL connection
+const jwt = require('jsonwebtoken');
+
+exports.signup = async (req, res) => {
+  const { username, password } = req.body;
+
+  try {
+    // Check if username exists
+    const [existingUser] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
+    if (existingUser.length > 0) {
+      return res.status(400).json({ message: 'Username already taken' });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert into DB
+    await db.query('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hashedPassword]);
+
+    res.status(201).json({ message: 'User created successfully' });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Signup failed' });
+  }
+};
+exports.login = async (req, res) => {
+  const { username, password } = req.body;
+
+  try {
+    const [users] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
+    const user = users[0];
+
+    if (!user) return res.status(400).json({ message: 'Invalid username or password' });
+
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(400).json({ message: 'Invalid username or password' });
+
+    // Create JWT token with id and role
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Login failed' });
+  }
+};
+
+
+const db = require('../config/db');
+
+exports.createBooking = async (req, res) => {
+  const { customer_name, address, date_time, service_id } = req.body;
+  const userId = req.user.id;
+
+  try {
+    await db.query(
+      'INSERT INTO bookings (customer_name, address, date_time, service_id, user_id) VALUES (?, ?, ?, ?, ?)',
+      [customer_name, address, date_time, service_id, userId]
+    );
+    res.status(201).json({ message: 'Booking created' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to create booking' });
+  }
+};
+
+const db = require('../config/db');
+
+exports.getUserBookings = async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const [rows] = await db.query(`
+      SELECT b.id, b.customer_name, b.address, b.date_time, s.name AS service_name
+      FROM bookings b
+      JOIN services s ON b.service_id = s.id
+      WHERE b.user_id = ?
+      ORDER BY b.date_time DESC
+    `, [userId]);
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to get bookings' });
+  }
+};
+
+exports.updateBooking = async (req, res) => {
+  const { customer_name, address, date_time, service_id } = req.body;
+  const bookingId = req.params.id;
+  const userId = req.user.id;
+
+  try {
+    await db.query(`
+      UPDATE bookings
+      SET customer_name = ?, address = ?, date_time = ?, service_id = ?
+      WHERE id = ? AND user_id = ?
+    `, [customer_name, address, date_time, service_id, bookingId, userId]);
+
+    res.json({ message: 'Booking updated' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to update booking' });
+  }
+};
+
+exports.deleteBooking = async (req, res) => {
+  const bookingId = req.params.id;
+  const userId = req.user.id;
+
+  try {
+    await db.query('DELETE FROM bookings WHERE id = ? AND user_id = ?', [bookingId, userId]);
+    res.json({ message: 'Booking deleted' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete booking' });
+  }
+};
+
+const db = require('../config/db');
+
+exports.getAllBookings = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT b.id, b.customer_name, b.address, b.date_time, s.name AS service_name, u.username AS booked_by
+      FROM bookings b
+      JOIN services s ON b.service_id = s.id
+      JOIN users u ON b.user_id = u.id
+      ORDER BY b.date_time DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Failed to fetch bookings' });
+  }
+};
+
+exports.getAllServices = async (req, res) => {
+  try {
+    const [services] = await db.query('SELECT * FROM services');
+    res.json(services);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch services' });
+  }
+};
+
+exports.addService = async (req, res) => {
+  const { name } = req.body;
+  try {
+    await db.query('INSERT INTO services (name) VALUES (?)', [name]);
+    res.status(201).json({ message: 'Service added' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to add service' });
+  }
+};
+
+exports.deleteService = async (req, res) => {
+  const serviceId = req.params.id;
+  try {
+    await db.query('DELETE FROM services WHERE id = ?', [serviceId]);
+    res.json({ message: 'Service deleted' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete service' });
+  }
+};
